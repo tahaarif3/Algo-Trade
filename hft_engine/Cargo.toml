@@ -1,0 +1,20 @@
+[package]
+name = "hft_engine"
+version = "0.1.0"
+edition = "2021"
+description = "O(1) Limit Order Book and DES loop for HFT backtesting — PyO3 Python extension"
+
+[lib]
+name = "hft_engine"
+crate-type = ["cdylib"]   # Compile as a shared library for Python import
+
+[dependencies]
+# abi3-py310: compile against the stable Python ABI 3.10+.
+# Works with any Python >= 3.10 including 3.14 without version lock.
+pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
+slotmap = "1.0"           # Safe arena allocator for O(1) order node access
+
+[profile.release]
+opt-level = 3
+lto = true                # Link-time optimization for smaller, faster binary
+codegen-units = 1         # Single codegen unit for maximum inlining

@@ -1,0 +1,10 @@
+pandas>=2.0
+numpy>=1.24
+requests>=2.31
+ta>=0.11
+
+# HFT engine dependencies
+maturin>=1.14        # PyO3 Rust extension builder
+pyarrow>=24.0        # Parquet read/write for tick data
+sortedcontainers>=2.4  # Python LOB reference implementation
+msgpack>=1.2         # Fast binary serialization for event transport
