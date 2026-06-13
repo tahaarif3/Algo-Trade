@@ -1,0 +1,32 @@
+{
+  "ema_period": 200,
+  "rsi_period": 14,
+  "atr_period": 14,
+  "rsi_long_threshold": 30.0,
+  "rsi_short_threshold": 70.0,
+  "atr_mult_sl": 2.5,
+  "atr_mult_tp": 4.0,
+  "position_pct": 0.15000000000000002,
+  "use_srsi": false,
+  "srsi_window": 14,
+  "srsi_smooth1": 3,
+  "srsi_smooth2": 3,
+  "srsi_k_long": 20.0,
+  "srsi_k_short": 80.0,
+  "use_adx_filter": false,
+  "adx_period": 14,
+  "adx_threshold": 25.0,
+  "adx_sl_scale_factor": 0.02,
+  "use_limit_entry": false,
+  "limit_atr_offset": 0.2,
+  "use_rsi_ensemble": false,
+  "rsi_ensemble_periods": [
+    10,
+    14,
+    18
+  ],
+  "rsi_ensemble_min_votes": 2,
+  "starting_capital": 10000.0,
+  "fee_rate": 0.0004,
+  "warmup_candles": 210
+}

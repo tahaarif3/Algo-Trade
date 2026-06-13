@@ -32,30 +32,21 @@ from strategies.trend_oscillator import TrendOscillatorStrategy
 # ── Constants ──────────────────────────────────────────────────────────
 
 SYMBOL = "BTCUSDT"
-INTERVAL = "4h"
-
-# Fetch extra data before backtest start for EMA-200 warmup
-DATA_START = "2023-07-01"
 DATA_END = "2025-01-01"
-
-# Backtest window (within the fetched data)
-BACKTEST_START = "2024-01-01"
 BACKTEST_END = "2024-12-31"
-
-RUNS_DIR = "runs"
 DATA_DIR = "data"
-REPORT_FILE = "strategy_research_report.md"
 
 
-def ensure_dirs():
+def ensure_dirs(interval: str):
     """Create output directories."""
-    os.makedirs(RUNS_DIR, exist_ok=True)
+    os.makedirs(os.path.join("runs", interval), exist_ok=True)
     os.makedirs(DATA_DIR, exist_ok=True)
 
 
-def save_result(result: BacktestResult, filename: str):
+def save_result(result: BacktestResult, filename: str, interval: str):
     """Persist backtest results as JSON."""
-    path = os.path.join(RUNS_DIR, filename)
+    runs_dir = os.path.join("runs", interval)
+    path = os.path.join(runs_dir, filename)
     with open(path, "w", encoding="utf-8") as f:
         f.write(result.to_json())
     print(f"  [Runner] Results saved -> {path}")
@@ -63,7 +54,7 @@ def save_result(result: BacktestResult, filename: str):
 
 # ── Phase 1: Data Acquisition ─────────────────────────────────────────
 
-def fetch_data() -> "pd.DataFrame":
+def fetch_data(interval: str, data_start: str) -> "pd.DataFrame":
     """Fetch and validate candle data."""
     import pandas as pd
 
@@ -72,10 +63,10 @@ def fetch_data() -> "pd.DataFrame":
     print("=" * 60)
 
     loader = BinanceDataLoader(cache_dir=DATA_DIR)
-    df = loader.fetch_candles(SYMBOL, INTERVAL, DATA_START, DATA_END)
+    df = loader.fetch_candles(SYMBOL, interval, data_start, DATA_END)
 
     # Validate
-    validation = loader.validate_data(df, DATA_START, DATA_END, min_candles=1000)
+    validation = loader.validate_data(df, data_start, DATA_END, min_candles=1000)
     print(f"  [Validation] Total candles: {validation['total_candles']}")
     print(f"  [Validation] Range: {validation['actual_start']} -> {validation['actual_end']}")
     print(f"  [Validation] Valid: {validation['valid']}")
@@ -86,7 +77,6 @@ def fetch_data() -> "pd.DataFrame":
 
     # Slice to include warmup + backtest period
     # The strategy will handle warmup internally via config.warmup_candles
-    bt_start = pd.Timestamp(BACKTEST_START, tz="UTC")
     bt_end = pd.Timestamp(BACKTEST_END, tz="UTC")
 
     # We need data BEFORE bt_start for warmup — keep all data from DATA_START
@@ -120,7 +110,7 @@ def run_backtest(
     return result
 
 
-def run_baseline(data: "pd.DataFrame") -> BacktestResult:
+def run_baseline(data: "pd.DataFrame", interval: str) -> BacktestResult:
     """Run 1: Baseline with default parameters."""
     print("\n" + "=" * 60)
     print("PHASE 2/3 - RUN 1: BASELINE")
@@ -128,13 +118,14 @@ def run_baseline(data: "pd.DataFrame") -> BacktestResult:
 
     config = StrategyConfig()
     result = run_backtest(data, config, "Run 1 - Baseline")
-    save_result(result, "run_1_baseline.json")
+    save_result(result, "run_1_baseline.json", interval)
     return result
 
 
 def run_volatility_tuning(
     data: "pd.DataFrame",
     baseline_result: BacktestResult,
+    interval: str,
 ) -> BacktestResult:
     """Run 2: Adjust ATR multipliers based on baseline trade analysis.
 
@@ -185,7 +176,7 @@ def run_volatility_tuning(
     print(f"  [Params] SL mult: {config.atr_mult_sl}, TP mult: {config.atr_mult_tp}")
 
     result = run_backtest(data, config, "Run 2 - Volatility Tuned")
-    save_result(result, "run_2_volatility.json")
+    save_result(result, "run_2_volatility.json", interval)
     return result
 
 
@@ -193,6 +184,7 @@ def run_momentum_smoothing(
     data: "pd.DataFrame",
     result_1: BacktestResult,
     result_2: BacktestResult,
+    interval: str,
 ) -> BacktestResult:
     """Run 3: Swap RSI for Stochastic RSI to filter false signals.
 
@@ -232,7 +224,7 @@ def run_momentum_smoothing(
     print(f"  [Params] SRSI enabled, K thresholds: long<{config.srsi_k_long}, short>{config.srsi_k_short}")
 
     result = run_backtest(data, config, "Run 3 - Momentum Smoothed (SRSI)")
-    save_result(result, "run_3_momentum.json")
+    save_result(result, "run_3_momentum.json", interval)
     return result
 
 
@@ -241,6 +233,7 @@ def run_capital_efficiency(
     result_1: BacktestResult,
     result_2: BacktestResult,
     result_3: BacktestResult,
+    interval: str,
 ) -> BacktestResult:
     """Run 4: Optimize position sizing with -15% max DD guardrail.
 
@@ -330,7 +323,7 @@ def run_capital_efficiency(
     else:
         print(f"  [OK] Guardrail passed: MaxDD = -{actual_dd:.2f}% (limit: -15%)")
 
-    save_result(result, "run_4_capital.json")
+    save_result(result, "run_4_capital.json", interval)
     return result
 
 
@@ -339,6 +332,8 @@ def run_capital_efficiency(
 def generate_report(
     results: list[BacktestResult],
     baseline_config: StrategyConfig,
+    interval: str,
+    backtest_start: str,
 ) -> str:
     """Generate the final strategy_research_report.md."""
     print("\n" + "=" * 60)
@@ -353,8 +348,8 @@ def generate_report(
     lines.append("")
     lines.append(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"**Instrument:** BTC/USDT Perpetual Futures (Binance)")
-    lines.append(f"**Timeframe:** 4-Hour Candles")
-    lines.append(f"**Backtest Period:** {BACKTEST_START} to {BACKTEST_END}")
+    lines.append(f"**Timeframe:** {interval} Candles")
+    lines.append(f"**Backtest Period:** {backtest_start} to {BACKTEST_END}")
     lines.append(f"**Starting Capital:** ${baseline_config.starting_capital:,.2f}")
     lines.append(f"**Fee Model:** {baseline_config.fee_rate * 100:.2f}% taker per side")
     lines.append("")
@@ -501,20 +496,21 @@ def generate_report(
 
     report = "\n".join(lines)
 
-    with open(REPORT_FILE, "w", encoding="utf-8") as f:
+    report_file = os.path.join("runs", interval, "strategy_research_report.md")
+    with open(report_file, "w", encoding="utf-8") as f:
         f.write(report)
 
-    print(f"  [Report] Written -> {REPORT_FILE}")
+    print(f"  [Report] Written -> {report_file}")
     return report
 
 
-def update_strategy_defaults(winning_config: StrategyConfig):
+def update_strategy_defaults(winning_config: StrategyConfig, interval: str):
     """Update the strategy file's docstring to document the winning params.
 
     We write a companion config file rather than modifying Python code,
     which is safer and more extensible for MCP tool consumption.
     """
-    config_path = os.path.join("strategies", "winning_config.json")
+    config_path = os.path.join("strategies", f"winning_config_{interval}.json")
     with open(config_path, "w", encoding="utf-8") as f:
         f.write(winning_config.to_json())
     print(f"  [Deploy] Winning config saved -> {config_path}")
@@ -541,44 +537,56 @@ def _is_better(a: BacktestResult, b: BacktestResult) -> bool:
 
 def main():
     """Execute the full 4-phase research pipeline."""
+    import argparse
+    parser = argparse.ArgumentParser(description="TrendOscillatorStrategy Research Pipeline")
+    parser.add_argument("--interval", type=str, default="4h", help="Timeframe interval (e.g., 4h, 30m)")
+    parser.add_argument("--data-start", type=str, default="2023-07-01", help="Data start date (YYYY-MM-DD)")
+    parser.add_argument("--backtest-start", type=str, default="2024-01-01", help="Backtest start date (YYYY-MM-DD)")
+    args = parser.parse_args()
+
+    interval = args.interval
+    data_start = args.data_start
+    backtest_start = args.backtest_start
+
     print("============================================================")
     print("   TrendOscillatorStrategy -- Autonomous Research Pipeline   ")
     print("============================================================")
-    print(f"   Instrument: BTC/USDT  |  Timeframe: 4H                   ")
-    print(f"   Period: {BACKTEST_START} -> {BACKTEST_END}                     ")
+    print(f"   Instrument: {SYMBOL}  |  Timeframe: {interval}                   ")
+    print(f"   Period: {backtest_start} -> {BACKTEST_END}                     ")
     print(f"   Capital: $10,000  |  Fee: 0.04%/side                     ")
     print("============================================================")
 
-    ensure_dirs()
+    ensure_dirs(interval)
     baseline_config = StrategyConfig()
 
     # Phase 1: Data
-    data = fetch_data()
+    data = fetch_data(interval, data_start)
 
     # Phase 2+3: Optimization loop
-    r1 = run_baseline(data)
-    r2 = run_volatility_tuning(data, r1)
-    r3 = run_momentum_smoothing(data, r1, r2)
-    r4 = run_capital_efficiency(data, r1, r2, r3)
+    r1 = run_baseline(data, interval)
+    r2 = run_volatility_tuning(data, r1, interval)
+    r3 = run_momentum_smoothing(data, r1, r2, interval)
+    r4 = run_capital_efficiency(data, r1, r2, r3, interval)
 
     all_results = [r1, r2, r3, r4]
 
     # Phase 4: Report
-    generate_report(all_results, baseline_config)
+    generate_report(all_results, baseline_config, interval, backtest_start)
 
     # Deploy winning config
     winner = max(all_results, key=lambda r: r.metrics.get("sharpe_ratio", 0))
-    update_strategy_defaults(winner.config)
+    update_strategy_defaults(winner.config, interval)
 
     # Final summary
+    report_file = os.path.join("runs", interval, "strategy_research_report.md")
     print("\n" + "=" * 60)
     print("PIPELINE COMPLETE")
     print("=" * 60)
     for r in all_results:
         print(f"  {r.summary}")
     print(f"\n  WINNER: {winner.run_label}")
-    print(f"  Report: {REPORT_FILE}")
-    print(f"  Config: strategies/winning_config.json")
+    print(f"  Report: {report_file}")
+    print(f"  Config: strategies/winning_config_{interval}.json")
 
 
 if __name__ == "__main__":
