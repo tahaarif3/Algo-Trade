@@ -28,6 +28,7 @@ from engine.protocols import (
 )
 from engine.monte_carlo import MonteCarloRunner, MonteCarloResult
 from engine.walk_forward import WalkForwardAnalyzer, WFAResult
+from engine.hft_bar_wrapper import BarToHFTWrapper
 
 __all__ = [
     "StrategyConfig",
@@ -43,4 +44,5 @@ __all__ = [
     "MonteCarloResult",
     "WalkForwardAnalyzer",
     "WFAResult",
+    "BarToHFTWrapper",
 ]
