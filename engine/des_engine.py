@@ -88,6 +88,12 @@ class DiscreteEventSimulator:
         self._last_market_ts_ns: int = 0
         self._last_market_price: float = 0.0
 
+        # Concurrency & State Sync Primitives (Rust HFT core bindings)
+        from hft_engine import RealTimeStateBroker, BarBoundaryGatekeeper, TraceLogger
+        self.state_broker = RealTimeStateBroker()
+        self.gatekeeper = BarBoundaryGatekeeper(self.state_broker)
+        self.trace_logger = TraceLogger()
+
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
     # ------------------------------------------------------------------ #
@@ -111,6 +117,11 @@ class DiscreteEventSimulator:
             BacktestResult with trades, equity curve, and metrics.
         """
         self._strategy = strategy
+        if hasattr(strategy, "des") and strategy.des is None:
+            strategy.des = self
+        strategy.state_broker = self.state_broker
+        strategy.gatekeeper = self.gatekeeper
+        strategy.trace_logger = self.trace_logger
         self._sim_start_ns = time.perf_counter_ns()
 
         # Seed the queue with all incoming events
@@ -212,6 +223,7 @@ class DiscreteEventSimulator:
         The strategy receives the current LOB state and may return SignalEvents.
         Each signal is immediately routed through the latency bridge.
         """
+        self.gatekeeper.update_processed_tick(tick.timestamp_ns)
         self._last_market_ts_ns = tick.timestamp_ns
         self._last_market_price = tick.price
 
@@ -428,6 +440,24 @@ class DiscreteEventSimulator:
         self._position_entry_time = fill.timestamp_ns
         self._capital -= fee
 
+        from hft_engine import PositionStatus, ExecutionReport
+        status = PositionStatus.Long if signal.side == "long" else PositionStatus.Short
+        self.state_broker.update_status(status)
+        self.trace_logger.log_event(
+            fill.timestamp_ns,
+            1,
+            "StateBrokerUpdate",
+            f"Open {signal.side} position"
+        )
+        self.gatekeeper.push_report(ExecutionReport(
+            fill.timestamp_ns,
+            fill.order_id,
+            fill.fill_price,
+            fill.fill_qty,
+            -fee,
+            status
+        ))
+
     def _close_position(self, fill: FillEvent) -> None:
         """Close an open position and record the trade."""
         if self._position_side is None:
@@ -470,6 +500,23 @@ class DiscreteEventSimulator:
         self._position_entry_price = 0.0
         self._position_entry_fee = 0.0
         self._open_order_id = None
+
+        from hft_engine import PositionStatus, ExecutionReport
+        self.state_broker.update_status(PositionStatus.Flat)
+        self.trace_logger.log_event(
+            fill.timestamp_ns,
+            1,
+            "StateBrokerUpdate",
+            "Position closed (Flat)"
+        )
+        self.gatekeeper.push_report(ExecutionReport(
+            fill.timestamp_ns,
+            fill.order_id,
+            fill.fill_price,
+            fill.fill_qty,
+            net_pnl,
+            PositionStatus.Flat
+        ))
 
     def _force_close(self, timestamp_ns: int) -> None:
         """Force-close open position at simulation end using mid-price."""

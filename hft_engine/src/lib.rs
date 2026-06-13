@@ -12,9 +12,14 @@ use pyo3::exceptions::PyValueError;
 
 mod types;
 mod order_book;
+mod sync;
 
 use types::Side;
 use order_book::OrderBook;
+use sync::{
+    PositionStatus, PyExecutionReport, PyRealTimeStateBroker,
+    PyTraceEvent, PyTraceLogger, PyBarBoundaryGatekeeper
+};
 
 
 // ---------------------------------------------------------------------------
@@ -165,5 +170,11 @@ impl PyOrderBook {
 fn hft_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOrderBook>()?;
     m.add_class::<PyFill>()?;
+    m.add_class::<PositionStatus>()?;
+    m.add_class::<PyExecutionReport>()?;
+    m.add_class::<PyRealTimeStateBroker>()?;
+    m.add_class::<PyTraceEvent>()?;
+    m.add_class::<PyTraceLogger>()?;
+    m.add_class::<PyBarBoundaryGatekeeper>()?;
     Ok(())
 }

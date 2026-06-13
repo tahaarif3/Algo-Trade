@@ -71,6 +71,7 @@ class BarToHFTWrapper(HFTStrategyProtocol):
 
         # 1. Intra-bar exits: Check SL/TP on every tick if in a position
         if self.position_side is not None:
+            triggered = False
             if self.position_side == "long":
                 if tick.price <= self.sl_price:
                     signals.append(
@@ -82,6 +83,7 @@ class BarToHFTWrapper(HFTStrategyProtocol):
                             order_type="market",
                         )
                     )
+                    triggered = True
                 elif tick.price >= self.tp_price:
                     signals.append(
                         SignalEvent(
@@ -92,6 +94,7 @@ class BarToHFTWrapper(HFTStrategyProtocol):
                             order_type="market",
                         )
                     )
+                    triggered = True
             elif self.position_side == "short":
                 if tick.price >= self.sl_price:
                     signals.append(
@@ -103,6 +106,7 @@ class BarToHFTWrapper(HFTStrategyProtocol):
                             order_type="market",
                         )
                     )
+                    triggered = True
                 elif tick.price <= self.tp_price:
                     signals.append(
                         SignalEvent(
@@ -113,9 +117,19 @@ class BarToHFTWrapper(HFTStrategyProtocol):
                             order_type="market",
                         )
                     )
+                    triggered = True
 
-            # If an exit was triggered, we return immediately to avoid checking entries
-            if signals:
+            if triggered:
+                from hft_engine import PositionStatus
+                if hasattr(self, "state_broker") and self.state_broker is not None:
+                    self.state_broker.update_status(PositionStatus.PendingClose)
+                if hasattr(self, "trace_logger") and self.trace_logger is not None:
+                    self.trace_logger.log_event(
+                        tick.timestamp_ns,
+                        2,
+                        "StopTriggered",
+                        f"Exit triggered: stop price hit at {tick.price}"
+                    )
                 return signals
 
         # 2. Time-syncing: Process bar transitions & check entries
@@ -127,6 +141,44 @@ class BarToHFTWrapper(HFTStrategyProtocol):
             bar_close_ns = self.df.index[next_eval_idx].value + self.bar_duration_ns
             if tick.timestamp_ns < bar_close_ns:
                 break
+
+            # 2a. Reconcile state at the boundary
+            from hft_engine import PositionStatus
+            if hasattr(self, "trace_logger") and self.trace_logger is not None:
+                self.trace_logger.log_event(
+                    tick.timestamp_ns,
+                    2,
+                    "BoundarySyncStart",
+                    f"Boundary bar_idx: {next_eval_idx}"
+                )
+
+            if hasattr(self, "gatekeeper") and self.gatekeeper is not None:
+                self.gatekeeper.reconcile_boundary_state(bar_close_ns, 50) # 50ms timeout
+                
+                # Pull execution reports to reconcile strategy state
+                reports = self.gatekeeper.pull_reports()
+                for r in reports:
+                    if r.status == PositionStatus.Flat:
+                        self.position_side = None
+                        self.entry_price = 0.0
+                        self.sl_price = 0.0
+                        self.tp_price = 0.0
+                        self.qty = 0.0
+                        self.pending_entry_bar_idx = None
+                        self.signal_bar_idx = None
+                    else:
+                        self.position_side = "long" if r.status == PositionStatus.Long else "short"
+                        self.entry_price = r.fill_price
+                        self.qty = r.fill_qty
+
+            if hasattr(self, "trace_logger") and self.trace_logger is not None:
+                current_status = self.state_broker.get_status() if hasattr(self, "state_broker") else "Unknown"
+                self.trace_logger.log_event(
+                    tick.timestamp_ns,
+                    2,
+                    "BoundarySyncEnd",
+                    f"Final state: {current_status}"
+                )
 
             signals.extend(
                 self._evaluate_bar(next_eval_idx, tick.timestamp_ns, tick.price)
